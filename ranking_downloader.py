@@ -7,6 +7,8 @@
 import datetime
 import os
 import hashlib
+import json
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 try:
@@ -30,6 +32,16 @@ class ImageTask(object):
         m = hashlib.md5()
         m.update(self.img_url.encode())
         return m.hexdigest()
+    
+    def __str__(self):
+        data = {
+            'img_url': self.img_url,
+            'title': self.title,
+            'page_idx': self.page_idx,
+            'date': self.date,
+            'rank': self.rank
+        }
+        return json.dumps(data)
 
 
 class PixivImageUrlExtractor(object):
@@ -63,10 +75,12 @@ class PixivImageUrlExtractor(object):
 
 
 class Downloader(object):
-    def __init__(self, save_root, api, visited_urls=None):
+    def __init__(self, save_root, api, visited_urls=None, try_time=5, try_interval=1):
         self.save_root = save_root
         self.api = api
         self.visited_urls = visited_urls if visited_urls is not None else set()
+        self.try_time = try_time
+        self.try_interval = try_interval
 
     def download(self, image_task):
 
@@ -86,11 +100,20 @@ class Downloader(object):
         image_name += suffix
 
         self.visited_urls.add(url_md5)
-        self.api.download(
-            url = image_task.img_url,
-            path=folder_name,
-            name=image_name
-        )
+        try_count = 0
+        while try_count < self.try_time:
+            try:
+                self.api.download(
+                    url = image_task.img_url,
+                    path=folder_name,
+                    name=image_name
+                )
+                return
+            except:
+                try_count += 1
+                time.sleep(self.try_interval)
+        print('cannot download image task: {}'.format(image_task))
+                
 
     def __call__(self, image_task):
         return self.download(image_task)
@@ -105,11 +128,14 @@ if __name__ == '__main__':
     username = 'YOUR USER NAME'                 # pixiv用户名
     password = 'YOUR USER PASSWORD'             # pixiv密码
     save_root = './download'                    # 保存路径
+    timeout = 10                                # 超时时间
+    try_time = 5                                # 超时后重试次数
+    try_interval = 1                            # 超时后重试的时间间隔
 
-    api = pp.AppPixivAPI()
+    api = pp.AppPixivAPI(timeout=timeout)
     resp = api.login(username, password)
     pixiv_image_url_extractor = PixivImageUrlExtractor(api)
-    downloader = Downloader(save_root=save_root, api=api)
+    downloader = Downloader(save_root=save_root, api=api, try_time=try_time, try_interval=try_interval)
 
     try:
         with ThreadPoolExecutor(max_workers=thread_num) as e:
